@@ -1,4 +1,4 @@
-from flask import Flask, Response
+from flask import Flask, jsonify, request  # ✅ jsonify 추가
 import io
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -12,7 +12,7 @@ app = Flask(__name__)
 engine = utils.get_engine()
 
 # -------------------------------
-# GET: 전체 데이터 예측
+# GET: 전체 데이터 예측 -> JSON 반환으로 수정
 # -------------------------------
 @app.get("/api/predict")
 def predict_handle():
@@ -24,7 +24,7 @@ def predict_handle():
     """)
     df = pd.read_sql(query, engine)
     if df.empty:
-        return {"error": "No data"}, 404
+        return jsonify({"error": "No data"}), 404
 
     df['ds'] = pd.to_datetime(df['ds'])
     df['y'] = df['y'].fillna(0)
@@ -35,51 +35,52 @@ def predict_handle():
     future = model.make_future_dataframe(periods=30)
     forecast = model.predict(future)
 
-    # 그래프 그리기
-    fig, ax = plt.subplots(figsize=(10,6))
-    ax.plot(forecast['ds'], forecast['yhat'], label='예측값')
-    ax.fill_between(forecast['ds'], forecast['yhat_lower'], forecast['yhat_upper'], color='skyblue', alpha=0.4, label='신뢰구간')
-    ax.set_title("Prophet 예측 결과")
-    ax.set_xlabel("날짜")
-    ax.set_ylabel("예측값")
-    ax.legend()
+    # 결과 DataFrame 일부 컬럼만 선택
+    result = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']]
+    # datetime을 문자열로 변환 (JSON 직렬화 가능하도록)
+    result['ds'] = result['ds'].astype(str)
 
-    # PNG 이미지 메모리 버퍼에 저장
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close(fig)
+    # JSON 응답
+    return jsonify(result.to_dict(orient='records'))
 
-    # 이미지 응답
-    return Response(buf.getvalue(), mimetype='image/png')
 # -------------------------------
 # POST: 새 데이터 저장
 # -------------------------------
 @app.post("/api/predict")
-def insert_handle():
+def predict_for_input_date():
     data = request.json
 
     try:
-        date = datetime.strptime(data['Date'], "%Y-%m-%d")
+        input_date = datetime.strptime(data['Date'], "%Y-%m-%d")
         qty = float(data['Qty'])
         price = int(data['Price'])
         mrp = float(data['MRP'])
-        size = data.get('Size', None)  # 없으면 None
     except (KeyError, ValueError):
         return jsonify({"error": "Invalid input"}), 400
 
+    # ✅ 1) 기존 데이터 조회
     query = text("""
-        INSERT INTO products_sales (Date, Qty, Price, MRP, Size)
-        VALUES (:date, :qty, :price, :mrp, :size)
+        SELECT Date AS ds, Qty AS y
+        FROM products_sales
+        ORDER BY Date
     """)
+    df = pd.read_sql(query, engine)
+    if df.empty:
+        return jsonify({"error": "No data in DB"}), 404
 
-    with engine.begin() as conn:
-        conn.execute(query, {
-            "date": date,
-            "qty": qty,
-            "price": price,
-            "mrp": mrp,
-            "size": size
-        })
+    df['ds'] = pd.to_datetime(df['ds'])
+    df['y'] = df['y'].fillna(0)
 
-    return jsonify({"message": "Data inserted successfully"}), 201
+    # ✅ 2) Prophet 모델 학습
+    model = Prophet()
+    model.fit(df)
+
+    # ✅ 3) 사용자가 보낸 날짜만 future에 넣어서 예측
+    future = pd.DataFrame({'ds': [input_date]})
+    forecast = model.predict(future)
+
+    result = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
+    result['ds'] = result['ds'].astype(str)
+
+    # ✅ 4) 한 건만 JSON으로 반환
+    return jsonify(result.iloc[0].to_dict()), 200
