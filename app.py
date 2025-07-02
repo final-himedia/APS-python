@@ -5,6 +5,7 @@ import pandas as pd
 from prophet import Prophet
 from sqlalchemy import text
 import utils
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -26,7 +27,7 @@ def predict_handle():
     if df.empty:
         return jsonify({"error": "No data"}), 404
 
-    df['ds'] = pd.to_datetime(df['ds'])
+    df['ds'] = pd.to_datetime(df['ds'], format='mixed', errors='coerce')
     df['y'] = df['y'].fillna(0)
 
     # Prophet 모델 학습 및 예측
@@ -66,7 +67,7 @@ def predict_for_input_date():
     """)
     df = pd.read_sql(query, engine)
     if df.empty:
-        return jsonify({"error": "No data in DB"}), 404
+        return jsonify({"error": "No file uploaded"}), 400
 
     df['ds'] = pd.to_datetime(df['ds'])
     df['y'] = df['y'].fillna(0)
@@ -84,3 +85,49 @@ def predict_for_input_date():
 
     # ✅ 4) 한 건만 JSON으로 반환
     return jsonify(result.iloc[0].to_dict()), 200
+
+
+# -------------------------------
+# POST: 엑셀 업로드 후 DB 저장
+# -------------------------------
+
+@app.post("/api/upload-file")
+def upload_files_to_db():
+
+    # 파일이 없으면 에러
+    if not request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    total = 0
+
+    # 업로드된 모든 파일 처리
+    for file in request.files.values():
+        name = file.filename.lower()
+
+        # 파일 확장자에 따라 읽기
+        if name.endswith(".csv"):
+            df = pd.read_csv(file)
+        elif name.endswith(".xlsx"):
+            df = pd.read_excel(file, engine="openpyxl")
+        else:
+            continue
+
+        if not all(col in df.columns for col in ["Date", "Qty", "Price", "MRP"]):
+            continue
+
+        # 필요한 컬럼만 추출하고 형식 변환
+        df = df[["Date", "Qty", "Price", "MRP"]]
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
+        df["Price"] = pd.to_numeric(df["Price"], errors="coerce", downcast="integer")
+        df["MRP"] = pd.to_numeric(df["MRP"], errors="coerce")
+
+        df = df.dropna()
+
+        # DB 저장
+        df.to_sql("products_sales", con=engine, if_exists="append", index=False)
+        total += len(df)
+
+    if total == 0:
+        return jsonify({"message": "No valid data"}), 400
+
+    return jsonify({"message": f"{total} rows saved"}), 200
