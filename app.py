@@ -29,13 +29,18 @@ def predict_handle():
     if df.empty:
         return jsonify({"error": "No data"}), 404
 
-    df['ds'] = pd.to_datetime(df['ds'], format='mixed', errors='coerce')
-    df['y'] = df['y'].fillna(0)
+    # df['ds'] = pd.to_datetime(df['ds'], format='mixed', errors='coerce')
+    # df['y'] = df['y'].fillna(0)
 
     # Prophet 모델 학습 및 예측
+    df = (
+        df.groupby("ds", as_index=False)
+        .agg({"y": "sum"})
+        .sort_values("ds")
+    )
     model = Prophet()
     model.fit(df)
-    future = model.make_future_dataframe(periods=30)
+    future = model.make_future_dataframe(periods=12, freq="MS")
     forecast = model.predict(future)
 
     # 결과 DataFrame 일부 컬럼만 선택
