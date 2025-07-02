@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request  # ✅ jsonify 추가
+from flask import Flask, jsonify, request
 import io
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -6,8 +6,10 @@ from prophet import Prophet
 from sqlalchemy import text
 import utils
 from datetime import datetime
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 # DB 연결 엔진
 engine = utils.get_engine()
@@ -118,6 +120,7 @@ def upload_files_to_db():
         # 필요한 컬럼만 추출하고 형식 변환
         df = df[["Date", "Qty", "Price", "MRP"]]
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
+        df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce")
         df["Price"] = pd.to_numeric(df["Price"], errors="coerce", downcast="integer")
         df["MRP"] = pd.to_numeric(df["MRP"], errors="coerce")
 
