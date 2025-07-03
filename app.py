@@ -21,8 +21,9 @@ engine = utils.get_engine()
 def predict_handle():
     # 데이터 조회
     query = text("""
-        SELECT Date AS ds, Qty AS y
-        FROM products_sales
+        SELECT Date AS ds, sum(Qty) AS y
+        FROM products_sales  
+        GROUP BY ds
         ORDER BY Date
     """)
     df = pd.read_sql(query, engine)
@@ -33,11 +34,7 @@ def predict_handle():
     # df['y'] = df['y'].fillna(0)
 
     # Prophet 모델 학습 및 예측
-    df = (
-        df.groupby("ds", as_index=False)
-        .agg({"y": "sum"})
-        .sort_values("ds")
-    )
+
     model = Prophet()
     model.fit(df)
     future = model.make_future_dataframe(periods=12, freq="MS")
