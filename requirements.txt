@@ -4,3 +4,4 @@ pandas
 prophet
 sqlalchemy
 plotly
+pymysql
